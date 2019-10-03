@@ -1,0 +1,117 @@
+#Script for checking materials in SAP
+Function GetListOfTasks{
+$uri = $main_uri
+#some uri thich I can`t show cause of NDA
+$method = "get"
+$responce = Invoke-RestMethod -Headers $headers -Method $method -Uri $uri
+    return $responce
+}
+#Checking materials with specific transaction
+CheckAvailability {
+        $ID = Invoke-Method $session "findById" @("wnd[0]/tbar[0]/okcd")
+        Set-Property $ID "text" @("/nmb52")
+        $ID = Invoke-Method $session "findById" @("wnd[0]")
+        Invoke-Method $ID "sendVKey" @(0)
+        # ---- Start entering material code
+        $ID = Invoke-Method $session "findById" @("wnd[0]/usr/btn%_MATNR_%_APP_%-VALU_PUSH")
+        Invoke-Method $ID "press"
+        $ID = Invoke-Method $session "findById" @("wnd[1]/usr/tabsTAB_STRIP/tabpSIVA/ssubSCREEN_HEADER:SAPLALDB:3010/tblSAPLALDBSINGLE/ctxtRSCSEL_255-SLOW_I[1,0]")
+        Set-Property $ID "text" $obj.u_equipment_material_sap_code
+        $ID = Invoke-Method $session "findById" @("wnd[1]/usr/tabsTAB_STRIP/tabpSIVA/ssubSCREEN_HEADER:SAPLALDB:3010/tblSAPLALDBSINGLE/ctxtRSCSEL_255-SLOW_I[1,1]")
+        Set-Property $ID "caretPosition" @("8")
+        $ID = Invoke-Method $session "findById" @("wnd[1]/tbar[0]/btn[8]")
+        Invoke-Method $ID "press"
+        $ID = Invoke-Method $session "findById" @("wnd[0]/usr/btn%_WERKS_%_APP_%-VALU_PUSH")
+        Invoke-Method $ID "press"
+        $ID = Invoke-Method $session "findById" @("wnd[1]/usr/tabsTAB_STRIP/tabpSIVA/ssubSCREEN_HEADER:SAPLALDB:3010/tblSAPLALDBSINGLE/ctxtRSCSEL_255-SLOW_I[1,0]")
+        Set-Property $ID "text" $plant_from
+        $ID = Invoke-Method $session "findById" @("wnd[1]/usr/tabsTAB_STRIP/tabpSIVA/ssubSCREEN_HEADER:SAPLALDB:3010/tblSAPLALDBSINGLE/ctxtRSCSEL_255-SLOW_I[1,1]")
+        Set-Property $ID "caretPosition" @("4")
+        $ID = Invoke-Method $session "findById" @("wnd[1]/tbar[0]/btn[8]")
+        Invoke-Method $ID "press"
+        $ID = Invoke-Method $session "findById" @("wnd[0]/usr/btn%_LGORT_%_APP_%-VALU_PUSH")
+        Invoke-Method $ID "press"
+        $ID = Invoke-Method $session "findById" @("wnd[1]/usr/tabsTAB_STRIP/tabpSIVA/ssubSCREEN_HEADER:SAPLALDB:3010/tblSAPLALDBSINGLE/ctxtRSCSEL_255-SLOW_I[1,0]")
+        Set-Property $ID "text" $loc_from
+        $ID = Invoke-Method $session "findById" @("wnd[1]/usr/tabsTAB_STRIP/tabpSIVA/ssubSCREEN_HEADER:SAPLALDB:3010/tblSAPLALDBSINGLE/ctxtRSCSEL_255-SLOW_I[1,1]")
+        Set-Property $ID "caretPosition" @("4")
+        $ID = Invoke-Method $session "findById" @("wnd[1]/tbar[0]/btn[8]")
+        Invoke-Method $ID "press"
+        $ID = Invoke-Method $session "findById" @("wnd[0]/usr/lbl[31,3]")
+        Invoke-Method $ID "setFocus"
+        $ID = Invoke-Method $session "findById" @("wnd[0]/usr/lbl[31,3]")
+        $spec_stock = Get-Property $ID "text" 
+        $ID = Invoke-Method $session "findById" @("wnd[0]/tbar[1]/btn[8]")
+        Invoke-Method $ID "press"
+        # ---- Check status bar
+        $ID = Invoke-Method $session "findById" @("wnd[0]/sbar")
+        $errtext = Get-Property $ID "text" 
+        
+if ($errtext -eq "")
+       { 
+         return $true
+       }
+      else {
+         return $false
+      }
+}
+
+
+# ---- Main part
+$base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("{0}:{1}" -f $user, $pass)))
+#Here we have encoding for system administrator account (for better security)
+# Set proper headers
+$headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+$headers.Add('Authorization',('Basic {0}' -f $base64AuthInfo))
+$headers.Add('Accept','application/json')
+# ---- Get list of tasks from ServiceNow through API connection
+$responceList = GetListOfTasks
+#-Set the path to the SAP GUI directory
+$SAPGUIPath = "...\SAP\FrontEnd\SAPgui\"
+$params = "-system=ECQ"
+#-Starts the SAP GUI
+$SAPGUI = $SAPGUIPath + "sapshcut.exe"
+& $SAPGUI $params
+# ---- Check if SAP is running
+$error.Clear()
+        $SapGuiAuto = [microsoft.visualbasic.Interaction]::GetObject("SAPGUI")
+        $application = Invoke-Method $SapGuiAuto "GetScriptingEngine"
+        
+        $connection = Get-Property $application "Children" @(0)
+        if ($error.Count -gt 0){
+            Write-Host "Error: SAP is not running"
+            exit
+        }
+        if ($application.Children().Count() -gt 1){
+            $connection = $connection[0]
+        }
+        
+        $session = Get-Property $connection "Children" @(0)
+        if ($connection.Children().Count() -gt 1){
+            $session = $session[0]
+        }
+        
+# ---- Start checking every task in Tasklist
+foreach ($respL in $responceList.result)
+{
+$mat_nmb = $responseMaterials.result.Count
+$uri = $uri_start + $respL.request.value
+$method = "get"
+$responseMaterials = Invoke-RestMethod -Headers $headers -Method $method -Uri $uri 
+#We take materials in every task through API as well
+
+  foreach ($respM in $responseMaterials.result) {
+
+    $aM = CheckAvailability($respM)
+        if ($aM.result -eq $true){
+               $mat_true_nmb++ 
+             }
+       else {
+               $mat_false_nmb++
+             }
+
+     }
+if ($mat_nmb -eq $mat_true_nmb){
+#Here we have other code for making migo transaction in SAP 
+  }
+}
